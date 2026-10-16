@@ -146,6 +146,35 @@ main{flex:1; padding:24px; max-width:1400px; width:100%; margin:0 auto;}
 @media (max-width:900px){ .chart-grid{grid-template-columns:1fr;} }
 .chart-wrap{position:relative; height:320px;}
 
+/* ---------- Catégories & cibles ---------- */
+.cat-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:16px;}
+.cat-card{
+  border:1px solid var(--line); border-radius:8px; padding:16px;
+  background:#f8fafc; display:flex; flex-direction:column; gap:8px;
+}
+.cat-name{font-weight:800; font-size:14px;}
+.cat-count{font-size:24px; font-weight:800; font-family:var(--mono);}
+.cat-count span{font-size:12px; color:var(--ink-soft); font-family:var(--sans); font-weight:400;}
+.cat-target-row{display:flex; align-items:center; gap:8px;}
+.cat-target-row label{font-size:12px; color:var(--ink-soft); font-weight:600;}
+.cat-target-row input{
+  width:90px; padding:6px 8px; min-height:34px; font-size:13px;
+  border:1px solid var(--line); border-radius:6px; background:#fbfcfd;
+  font-family:var(--mono);
+}
+.cat-target-row input:focus{outline:2px solid var(--steel);}
+.cat-progress{height:10px; background:#e6ebf0; border-radius:99px; overflow:hidden;}
+.cat-progress-fill{height:100%; background:var(--ok); border-radius:99px; transition:width .3s;}
+.cat-progress-fill.over{background:var(--attention);}
+.cat-progress-label{font-size:12px; color:var(--ink-soft);}
+.cat-persons{display:flex; flex-direction:column; gap:4px; margin-top:4px;}
+.cat-person{
+  display:flex; justify-content:space-between; font-size:12.5px;
+  padding:4px 0; border-bottom:1px dashed var(--line);
+}
+.cat-person:last-child{border-bottom:none;}
+.cat-person strong{font-family:var(--mono);}
+
 /* ---------- Tableaux ---------- */
 table{width:100%; border-collapse:collapse; font-size:13.5px;}
 th{
@@ -295,6 +324,13 @@ select:focus, input:focus{outline:2px solid var(--steel);}
       </div>
     </div>
 
+    <!-- ===== NOUVEAU : Catégories & cibles ===== -->
+    <div class="panel">
+      <h2>Catégories — identification & objectifs</h2>
+      <p class="sub">Par catégorie : total identifié, cible modifiable, progression et répartition par personne</p>
+      <div id="categories-panel-body"></div>
+    </div>
+
     <!-- Tableau détaillé par personne -->
     <div class="panel">
       <h2>Créateurs — détails</h2>
@@ -352,9 +388,6 @@ const firebaseConfig = {
   appId: "1:974245233171:web:2d779724958d605c6d75e6"
 };
 
-/* IMPORTANT : auth et db sont déclarés AU NIVEAU GLOBAL (let),
-   puis assignés dans le try. Sinon ils n'existeraient que dans
-   le bloc try { } et seraient invisibles ailleurs (ReferenceError). */
 let auth = null;
 let db = null;
 try {
@@ -370,7 +403,7 @@ try {
    =================================================================== */
 function isWeekend(date){
   const day = date.getDay();
-  return day === 0 || day === 6; // dimanche=0, samedi=6
+  return day === 0 || day === 6;
 }
 
 function countWorkingDays(from, to){
@@ -459,10 +492,25 @@ document.getElementById('login-pass').addEventListener('keydown', e=>{
    CHARGEMENT DES DONNÉES (LECTURE SEULE) + FILTRE WEEK-END
    =================================================================== */
 let CONTENANTS = [];
+let TYPES = {};       // { lettre: {categorieId, ...} }
+let CATEGORIES = {};  // { id: {nom, couleur, prefixe} }
+let CAT_ORDER = [];   // ordre d'affichage des catégories (pour setCible(idx))
 
 async function loadAllData(){
   showLoading(true);
   try {
+    // Charge types & catégories (lecture seule). Si échec, on continue
+    // quand même avec les contenants (catégorie = "Sans catégorie").
+    try {
+      const tSnap = await db.collection('types').get();
+      tSnap.forEach(d => { TYPES[d.id] = d.data(); });
+    } catch(e){ console.warn('Lecture types impossible :', e.message); }
+
+    try {
+      const cSnap = await db.collection('categories').get();
+      cSnap.forEach(d => { CATEGORIES[d.id] = d.data(); });
+    } catch(e){ console.warn('Lecture categories impossible :', e.message); }
+
     const snap = await db.collection('contenants').get();
     CONTENANTS = [];
 
@@ -472,7 +520,6 @@ async function loadAllData(){
       let creator = 'Inconnu';
       let creationDate = null;
 
-      // Cherche le créateur dans l'historique (action = 'creation')
       if(Array.isArray(d.historique) && d.historique.length > 0){
         const creationEntry = d.historique.find(h => h.action === 'creation');
         if(creationEntry){
@@ -486,12 +533,18 @@ async function loadAllData(){
 
       if(!creationDate) creationDate = d.dateCreation;
 
+      // Résolution de la catégorie via type -> categorieId -> nom
+      const t = TYPES[d.typeLettre];
+      const catId = t ? (t.categorieId || null) : null;
+      const catName = (catId && CATEGORIES[catId]) ? CATEGORIES[catId].nom : 'Sans catégorie';
+
       if(creationDate){
         CONTENANTS.push({
           id: doc.id,
           date: creationDate.toDate ? creationDate.toDate() : new Date(creationDate),
           creator: creator,
-          type: d.typeLettre || '?'
+          type: d.typeLettre || '?',
+          categorie: catName
         });
       }
     });
@@ -519,6 +572,7 @@ function renderAll(){
   renderKPIs();
   renderDailyChart();
   renderTopChart();
+  renderCategories();
   renderCreators();
   renderDaily();
 }
@@ -544,6 +598,80 @@ function renderKPIs(){
 }
 
 /* ===================================================================
+   CIBLES PAR CATÉGORIE (sauvegardées en localStorage)
+   =================================================================== */
+function cibleKey(catName){ return 'cible_cat_' + catName; }
+
+function getCible(catName){
+  try { return parseInt(localStorage.getItem(cibleKey(catName)), 10) || 0; }
+  catch(e){ return 0; }
+}
+
+function setCible(idx, val){
+  const catName = CAT_ORDER[idx];
+  if(catName === undefined) return;
+  try { localStorage.setItem(cibleKey(catName), String(parseInt(val,10) || 0)); } catch(e){}
+  renderCategories();
+  toast('Cible « ' + catName + ' » mise à jour.', 'ok');
+}
+
+/* ===================================================================
+   PANNEAU : Catégories — identification & objectifs
+   =================================================================== */
+function renderCategories(){
+  const byCat = {};
+  CONTENANTS.forEach(c => {
+    const cat = c.categorie || 'Sans catégorie';
+    if(!byCat[cat]) byCat[cat] = {total:0, byCreator:{}};
+    byCat[cat].total++;
+    byCat[cat].byCreator[c.creator] = (byCat[cat].byCreator[c.creator] || 0) + 1;
+  });
+
+  const el = document.getElementById('categories-panel-body');
+  const cats = Object.entries(byCat).sort((a,b) => b[1].total - a[1].total);
+  CAT_ORDER = cats.map(c => c[0]);
+
+  if(cats.length === 0){
+    el.innerHTML = '<div class="empty">Aucune catégorie à afficher.</div>';
+    return;
+  }
+
+  let html = '<div class="cat-grid">';
+
+  cats.forEach(([catName, stats], idx) => {
+    const target = getCible(catName);
+    const pct = target > 0 ? Math.min(100, Math.round(stats.total / target * 100)) : 0;
+    const over = target > 0 && stats.total >= target;
+
+    const persons = Object.entries(stats.byCreator).sort((a,b) => b[1] - a[1]);
+    const personsHtml = persons.map(([p,n]) =>
+      '<div class="cat-person"><span>' + escapeHtml(p) + '</span><strong>' + n + '</strong></div>'
+    ).join('');
+
+    html +=
+      '<div class="cat-card">' +
+        '<div class="cat-name">' + escapeHtml(catName) + '</div>' +
+        '<div class="cat-count">' + stats.total + ' <span>identifié(s)</span></div>' +
+        '<div class="cat-target-row">' +
+          '<label for="cible-' + idx + '">Cible</label>' +
+          '<input type="number" min="0" id="cible-' + idx + '" value="' + (target || '') + '" placeholder="—" ' +
+                 'onchange="setCible(' + idx + ', this.value)">' +
+        '</div>' +
+        '<div class="cat-progress">' +
+          '<div class="cat-progress-fill' + (over ? ' over' : '') + '" style="width:' + pct + '%"></div>' +
+        '</div>' +
+        '<div class="cat-progress-label">' +
+          (target > 0 ? stats.total + ' / ' + target + ' (' + pct + '%)' : 'Aucune cible définie') +
+        '</div>' +
+        '<div class="cat-persons">' + personsHtml + '</div>' +
+      '</div>';
+  });
+
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+/* ===================================================================
    GRAPHIQUE : créations par jour (jours ouvrés uniquement)
    =================================================================== */
 let dailyChart = null;
@@ -553,7 +681,7 @@ function renderDailyChart(){
   const days = [];
   for(let i = 59; i >= 0; i--){
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-    if(isWeekend(d)) continue; // >>> ignore samedi & dimanche <<<
+    if(isWeekend(d)) continue;
     days.push({date: d, count: 0});
   }
 
@@ -589,29 +717,10 @@ function renderDailyChart(){
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: {display: false}
-      },
+      plugins: { legend: {display: false} },
       scales: {
-        x: {
-          grid: {display: false},
-          ticks: {
-            maxTicksLimit: 12,
-            maxRotation: 45,
-            minRotation: 45
-          }
-        },
-        y: {
-          beginAtZero: true,
-          ticks: {
-            stepSize: 1,
-            precision: 0
-          },
-          title: {
-            display: true,
-            text: 'Nombre de créations'
-          }
-        }
+        x: { grid: {display: false}, ticks: {maxTicksLimit: 12, maxRotation: 45, minRotation: 45} },
+        y: { beginAtZero: true, ticks: {stepSize: 1, precision: 0}, title: {display: true, text: 'Nombre de créations'} }
       }
     }
   });
@@ -624,14 +733,9 @@ let topChart = null;
 
 function renderTopChart(){
   const counts = {};
-  CONTENANTS.forEach(c => {
-    counts[c.creator] = (counts[c.creator] || 0) + 1;
-  });
+  CONTENANTS.forEach(c => { counts[c.creator] = (counts[c.creator] || 0) + 1; });
 
-  const sorted = Object.entries(counts)
-    .sort((a,b) => b[1] - a[1])
-    .slice(0, 10);
-
+  const sorted = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 10);
   const labels = sorted.map(s => s[0]);
   const data = sorted.map(s => s[1]);
 
@@ -643,28 +747,16 @@ function renderTopChart(){
     type: 'bar',
     data: {
       labels: labels,
-      datasets: [{
-        label: 'Total',
-        data: data,
-        backgroundColor: '#2c5f8a',
-        borderRadius: 4
-      }]
+      datasets: [{ label: 'Total', data: data, backgroundColor: '#2c5f8a', borderRadius: 4 }]
     },
     options: {
       indexAxis: 'y',
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: {display: false}
-      },
+      plugins: { legend: {display: false} },
       scales: {
-        x: {
-          beginAtZero: true,
-          ticks: {precision: 0}
-        },
-        y: {
-          grid: {display: false}
-        }
+        x: { beginAtZero: true, ticks: {precision: 0} },
+        y: { grid: {display: false} }
       }
     }
   });
@@ -696,13 +788,7 @@ function renderCreators(){
   const byCreator = {};
   filtered.forEach(c => {
     if(!byCreator[c.creator]){
-      byCreator[c.creator] = {
-        total: 0,
-        today: 0,
-        week: 0,
-        firstDate: c.date,
-        lastDate: c.date
-      };
+      byCreator[c.creator] = { total:0, today:0, week:0, firstDate:c.date, lastDate:c.date };
     }
     byCreator[c.creator].total++;
     if(c.date >= today) byCreator[c.creator].today++;
@@ -732,7 +818,6 @@ function renderCreators(){
     '</tr></thead><tbody>';
 
   rows.forEach(([creator, stats]) => {
-    // >>> moyenne calculée sur les jours ouvrés uniquement <<<
     const daysActive = countWorkingDays(stats.firstDate, stats.lastDate);
     const avg = (stats.total / daysActive).toFixed(2);
     const barWidth = (stats.total / maxTotal) * 100;
