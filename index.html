@@ -13,7 +13,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 
-<!-- Chart.js pour les graphiques (SANS adapter date-fns) -->
+<!-- Chart.js pour les graphiques -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
 <style>
@@ -324,7 +324,7 @@ select:focus, input:focus{outline:2px solid var(--steel);}
       </div>
     </div>
 
-    <!-- ===== NOUVEAU : Catégories & cibles ===== -->
+    <!-- ===== Panneau Catégories & cibles ===== -->
     <div class="panel">
       <h2>Catégories — identification & objectifs</h2>
       <p class="sub">Par catégorie : total identifié, cible modifiable, progression et répartition par personne</p>
@@ -499,17 +499,17 @@ let CAT_ORDER = [];   // ordre d'affichage des catégories (pour setCible(idx))
 async function loadAllData(){
   showLoading(true);
   try {
-    // Charge types & catégories (lecture seule). Si échec, on continue
-    // quand même avec les contenants (catégorie = "Sans catégorie").
+    // Charge types & catégories (lecture seule)
+    // ATTENTION : noms des collections tels que définis dans les règles Firestore
     try {
-      const tSnap = await db.collection('types').get();
+      const tSnap = await db.collection('typesContenants').get();
       tSnap.forEach(d => { TYPES[d.id] = d.data(); });
-    } catch(e){ console.warn('Lecture types impossible :', e.message); }
+    } catch(e){ console.warn('Lecture typesContenants impossible :', e.message); }
 
     try {
-      const cSnap = await db.collection('categories').get();
+      const cSnap = await db.collection('categoriesContenants').get();
       cSnap.forEach(d => { CATEGORIES[d.id] = d.data(); });
-    } catch(e){ console.warn('Lecture categories impossible :', e.message); }
+    } catch(e){ console.warn('Lecture categoriesContenants impossible :', e.message); }
 
     const snap = await db.collection('contenants').get();
     CONTENANTS = [];
