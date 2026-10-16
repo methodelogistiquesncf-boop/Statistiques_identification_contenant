@@ -461,6 +461,19 @@ function addWorkingDays(date, n){
   return d;
 }
 
+/* Clé de jour LOCAL (aaaa-mm-jj) — sans passage par UTC/toISOString */
+function localDayKey(date){
+  return date.getFullYear() + '-' +
+         String(date.getMonth() + 1).padStart(2, '0') + '-' +
+         String(date.getDate()).padStart(2, '0');
+}
+
+/* Relit une clé aaaa-mm-jj en heure LOCALE (et non en UTC) */
+function parseDayKey(key){
+  const p = key.split('-').map(Number);
+  return new Date(p[0], p[1] - 1, p[2]);
+}
+
 /* ===================================================================
    UTILITAIRES UI
    =================================================================== */
@@ -802,8 +815,8 @@ function renderDailyChart(){
   }
 
   CONTENANTS.forEach(c => {
-    const dayKey = new Date(c.date.getFullYear(), c.date.getMonth(), c.date.getDate()).getTime();
-    const bucket = days.find(d => d.date.getTime() === dayKey);
+    const dayKey = localDayKey(c.date);
+    const bucket = days.find(d => localDayKey(d.date) === dayKey);
     if(bucket) bucket.count++;
   });
 
@@ -954,6 +967,7 @@ function renderCreators(){
 
 /* ===================================================================
    TABLEAU : historique jour par jour (jours ouvrés)
+   CORRECTION : clés de jour en heure LOCALE (plus de décalage UTC)
    =================================================================== */
 function renderDaily(){
   const fromStr = document.getElementById('filter-from').value;
@@ -961,18 +975,18 @@ function renderDaily(){
 
   let filtered = CONTENANTS;
   if(fromStr){
-    const from = new Date(fromStr);
+    const from = new Date(fromStr + 'T00:00:00');   // parse en heure locale
     filtered = filtered.filter(c => c.date >= from);
   }
   if(toStr){
-    const to = new Date(toStr);
-    to.setHours(23,59,59,999);
+    const to = new Date(toStr + 'T23:59:59.999');   // parse en heure locale
     filtered = filtered.filter(c => c.date <= to);
   }
 
   const byDay = {};
   filtered.forEach(c => {
-    const dayKey = new Date(c.date.getFullYear(), c.date.getMonth(), c.date.getDate()).toISOString().split('T')[0];
+    // ✅ clé construite en heure LOCALE (pas de toISOString → pas de décalage)
+    const dayKey = localDayKey(c.date);
     if(!byDay[dayKey]) byDay[dayKey] = {date: dayKey, total: 0, byCreator: {}};
     byDay[dayKey].total++;
     byDay[dayKey].byCreator[c.creator] = (byDay[dayKey].byCreator[c.creator] || 0) + 1;
@@ -995,7 +1009,8 @@ function renderDaily(){
     '</tr></thead><tbody>';
 
   rows.forEach(day => {
-    const d = new Date(day.date);
+    // ✅ relecture de la clé en heure LOCALE (pas de parse UTC)
+    const d = parseDayKey(day.date);
     const dayName = d.toLocaleDateString('fr-FR', {weekday: 'long'});
 
     const creators = Object.entries(day.byCreator).sort((a,b) => b[1] - a[1]);
