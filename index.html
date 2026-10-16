@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Statistiques de création - Suivi Contenants</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Firebase (compat SDK, même version que l'app principale) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+
+<!-- Chart.js pour les graphiques (SANS adapter date-fns) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<style>
+:root{
+  --bg:            #eef1f5;
+  --bg-grid:       #e2e8ee;
+  --panel:         #ffffff;
+  --ink:           #1b2733;
+  --ink-soft:      #57697c;
+  --line:          #dbe2ea;
+  --steel:         #2c5f8a;
+  --steel-dark:    #1f4763;
+  --steel-bg:      #e7eef5;
+  --ok:            #2f7d5b;
+  --ok-bg:         #e3f2ea;
+  --attention:     #c1631f;
+  --attention-bg:  #faedde;
+  --danger:        #b23a2e;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Inter', sans-serif;
+  --radius: 8px;
+  --shadow: 0 1px 2px rgba(27,39,51,0.06), 0 6px 20px rgba(27,39,51,0.06);
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:
+    repeating-linear-gradient(0deg, transparent, transparent 31px, var(--bg-grid) 32px),
+    repeating-linear-gradient(90deg, transparent, transparent 31px, var(--bg-grid) 32px),
+    var(--bg);
+  color:var(--ink);
+  font-family:var(--sans);
+  min-height:100vh;
+}
+
+/* ---------- Écran de connexion ---------- */
+#login-screen{
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+}
+.login-card{
+  width:100%;
+  max-width:420px;
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:14px;
+  box-shadow:var(--shadow);
+  padding:36px 32px;
+}
+.login-mark{
+  display:flex; align-items:center; gap:10px; margin-bottom:22px;
+}
+.login-mark .crate{
+  width:36px;height:36px;border-radius:7px;
+  background:linear-gradient(135deg, var(--steel), var(--steel-dark));
+  display:flex;align-items:center;justify-content:center;
+  color:#fff; font-weight:800; font-size:15px; font-family:var(--mono);
+}
+.login-mark div h1{font-size:16px;margin:0;font-weight:800;}
+.login-mark div p{margin:0;font-size:12.5px;color:var(--ink-soft);}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
+.field input{
+  width:100%; padding:12px; border:1px solid var(--line); border-radius:8px;
+  font-family:var(--sans); font-size:14px; background:#fbfcfd; color:var(--ink);
+  min-height:44px;
+}
+.field input:focus{outline:2px solid var(--steel); outline-offset:1px;}
+.btn{
+  appearance:none; border:none; cursor:pointer; border-radius:8px;
+  font-family:var(--sans); font-weight:600; font-size:14px;
+  padding:12px 16px; min-height:44px;
+  transition:filter .15s ease;
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+}
+.btn-primary{background:var(--steel); color:#fff; width:100%;}
+.btn-primary:hover{filter:brightness(1.1);}
+.btn-ghost{background:transparent; color:var(--steel); border:1px solid var(--line);}
+.btn-ghost:hover{background:var(--steel-bg);}
+.btn-sm{padding:7px 11px; font-size:12.5px; border-radius:6px; min-height:34px;}
+#login-error{color:var(--danger); font-size:13px; margin-top:10px; min-height:16px;}
+
+/* ---------- Application ---------- */
+#app{display:none; min-height:100vh; flex-direction:column;}
+header.topbar{
+  background:var(--panel); border-bottom:1px solid var(--line);
+  padding:12px 24px; display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:20; gap:14px; flex-wrap:wrap;
+}
+.brand{display:flex; align-items:center; gap:10px;}
+.brand .crate{
+  width:32px;height:32px;border-radius:6px;
+  background:linear-gradient(135deg, var(--steel), var(--steel-dark));
+  display:flex;align-items:center;justify-content:center; color:#fff; font-weight:800; font-size:12.5px;
+  font-family:var(--mono);
+}
+.brand h1{font-size:15px; margin:0; font-weight:800;}
+.brand p{margin:0; font-size:11.5px; color:var(--ink-soft);}
+.user-chip{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--ink-soft);}
+
+main{flex:1; padding:24px; max-width:1400px; width:100%; margin:0 auto;}
+
+.panel{
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+  box-shadow:var(--shadow); padding:20px; margin-bottom:20px;
+}
+.panel h2{margin:0 0 4px; font-size:16px; font-weight:800;}
+.panel .sub{margin:0 0 16px; font-size:12.5px; color:var(--ink-soft);}
+
+/* ---------- KPIs ---------- */
+.kpi-grid{display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-bottom:20px;}
+@media (max-width:820px){ .kpi-grid{grid-template-columns:repeat(2, 1fr);} }
+.kpi-card{
+  border:1px solid var(--line); border-radius:8px; padding:16px;
+  background:#f8fafc;
+}
+.kpi-card .kpi-label{font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--ink-soft);}
+.kpi-card .kpi-value{font-size:26px; font-weight:800; margin-top:6px; font-family:var(--mono);}
+.kpi-card .kpi-sub{font-size:12px; color:var(--ink-soft); margin-top:2px;}
+.kpi-card.accent-ok .kpi-value{color:var(--ok);}
+.kpi-card.accent-info .kpi-value{color:var(--steel);}
+.kpi-card.accent-warn .kpi-value{color:var(--attention);}
+
+/* ---------- Graphiques ---------- */
+.chart-grid{display:grid; grid-template-columns:2fr 1fr; gap:20px;}
+@media (max-width:900px){ .chart-grid{grid-template-columns:1fr;} }
+.chart-wrap{position:relative; height:320px;}
+
+/* ---------- Tableaux ---------- */
+table{width:100%; border-collapse:collapse; font-size:13.5px;}
+th{
+  text-align:left; font-size:11px; text-transform:uppercase;
+  color:var(--ink-soft); font-weight:700; padding:9px 10px; border-bottom:1px solid var(--line);
+}
+td{padding:11px 10px; border-bottom:1px solid var(--line); vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+.mono{font-family:var(--mono);}
+.num{text-align:right; font-family:var(--mono);}
+.bar{
+  display:inline-block; height:8px; background:var(--steel);
+  border-radius:4px; min-width:2px; vertical-align:middle; margin-left:6px;
+}
+.bar-today{background:var(--ok);}
+.bar-week{background:var(--attention);}
+
+/* ---------- Filtres ---------- */
+.toolbar{display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; align-items:center;}
+select, input[type=text], input[type=date]{
+  padding:10px; border:1px solid var(--line); border-radius:8px;
+  font-family:var(--sans); font-size:13.5px; background:#fbfcfd; color:var(--ink);
+  min-height:42px;
+}
+select:focus, input:focus{outline:2px solid var(--steel);}
+
+/* ---------- Loading ---------- */
+#loading-overlay{
+  position:fixed; inset:0; background:rgba(27,39,51,0.5); z-index:100;
+  display:none; align-items:center; justify-content:center;
+}
+#loading-overlay.visible{display:flex;}
+.spinner-big{
+  width:48px; height:48px; border-radius:50%;
+  border:4px solid rgba(255,255,255,0.3); border-top-color:#fff;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.empty{text-align:center; padding:36px 12px; color:var(--ink-soft); font-size:13.5px;}
+
+.toast-wrap{position:fixed; bottom:20px; right:20px; z-index:200; display:flex; flex-direction:column; gap:8px;}
+.toast{
+  background:var(--ink); color:#fff; padding:12px 16px; border-radius:8px; font-size:13.5px;
+  box-shadow:var(--shadow);
+}
+.toast.err{background:var(--danger);}
+.toast.ok{background:var(--ok);}
+
+/* ---------- Message d'erreur global ---------- */
+#global-error{
+  position:fixed; top:0; left:0; right:0;
+  background:var(--danger); color:#fff;
+  padding:12px 20px; font-size:13px;
+  display:none; z-index:300;
+}
+#global-error.visible{display:block;}
+</style>
+</head>
+<body>
+
+<div id="global-error"></div>
+
+<!-- ========================= ÉCRAN DE CONNEXION ========================= -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-mark">
+      <div class="crate">SC</div>
+      <div>
+        <h1>Statistiques de création</h1>
+        <p>Suivi Contenants — rapport des créations</p>
+      </div>
+    </div>
+    <div class="field">
+      <label for="login-email">Adresse e-mail</label>
+      <input type="text" id="login-email" autocomplete="username" placeholder="prenom.nom@entreprise.fr">
+    </div>
+    <div class="field">
+      <label for="login-pass">Mot de passe</label>
+      <input type="password" id="login-pass" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" onclick="doLogin()">Se connecter</button>
+    <div id="login-error"></div>
+    <p style="font-size:12px; color:var(--ink-soft); margin-top:14px; text-align:center;">
+      Utilise les mêmes identifiants que l'application principale.
+    </p>
+  </div>
+</div>
+
+<!-- ========================= APPLICATION ========================= -->
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="crate">SC</div>
+      <div>
+        <h1>Statistiques de création</h1>
+        <p>Qui a créé quoi, quand — jours ouvrés uniquement</p>
+      </div>
+    </div>
+    <div class="user-chip">
+      <span id="user-email"></span>
+      <button class="btn btn-ghost btn-sm" onclick="doLogout()">Déconnexion</button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- KPIs -->
+    <div class="kpi-grid">
+      <div class="kpi-card accent-info">
+        <div class="kpi-label">Total contenants</div>
+        <div class="kpi-value" id="kpi-total">—</div>
+        <div class="kpi-sub">Jours ouvrés (lun–ven)</div>
+      </div>
+      <div class="kpi-card accent-ok">
+        <div class="kpi-label">Créés aujourd'hui</div>
+        <div class="kpi-value" id="kpi-today">—</div>
+        <div class="kpi-sub" id="kpi-today-sub">—</div>
+      </div>
+      <div class="kpi-card accent-warn">
+        <div class="kpi-label">Créés (7 derniers jours)</div>
+        <div class="kpi-value" id="kpi-week">—</div>
+        <div class="kpi-sub">Jours ouvrés sur la semaine</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Créateurs actifs</div>
+        <div class="kpi-value" id="kpi-creators">—</div>
+        <div class="kpi-sub">Personnes distinctes</div>
+      </div>
+    </div>
+
+    <!-- Graphiques -->
+    <div class="chart-grid">
+      <div class="panel">
+        <h2>Créations par jour</h2>
+        <p class="sub">Évolution quotidienne sur les 60 derniers jours ouvrés (lun–ven)</p>
+        <div class="chart-wrap">
+          <canvas id="chart-daily"></canvas>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Top créateurs</h2>
+        <p class="sub">Classement par nombre total de créations</p>
+        <div class="chart-wrap">
+          <canvas id="chart-top"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tableau détaillé par personne -->
+    <div class="panel">
+      <h2>Créateurs — détails</h2>
+      <p class="sub">Total, moyenne et activité récente par personne (jours ouvrés)</p>
+
+      <div class="toolbar">
+        <input type="text" id="filter-creator" placeholder="Rechercher un créateur…" oninput="renderCreators()">
+        <select id="filter-period" onchange="renderCreators()">
+          <option value="all">Toute la période</option>
+          <option value="today">Aujourd'hui uniquement</option>
+          <option value="7days">7 derniers jours</option>
+          <option value="30days">30 derniers jours</option>
+          <option value="year">Cette année</option>
+        </select>
+      </div>
+
+      <div id="creators-table"></div>
+    </div>
+
+    <!-- Tableau journalier -->
+    <div class="panel">
+      <h2>Historique jour par jour</h2>
+      <p class="sub">Détail quotidien (jours ouvrés) : qui a créé quoi, combien de fois</p>
+
+      <div class="toolbar">
+        <label style="font-size:12.5px; color:var(--ink-soft);">Du</label>
+        <input type="date" id="filter-from" onchange="renderDaily()">
+        <label style="font-size:12.5px; color:var(--ink-soft);">Au</label>
+        <input type="date" id="filter-to" onchange="renderDaily()">
+        <button class="btn btn-ghost btn-sm" onclick="resetDateFilter()">Période complète</button>
+      </div>
+
+      <div id="daily-table"></div>
+    </div>
+
+  </main>
+</div>
+
+<div id="loading-overlay">
+  <div class="spinner-big"></div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script>
+/* ===================================================================
+   CONFIGURATION FIREBASE (identique à l'app principale)
+   =================================================================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyCt0wwzyQEk1PaZf2cQMNIAiQonWiPqyN8",
+  authDomain: "gestiondescontenants.firebaseapp.com",
+  projectId: "gestiondescontenants",
+  storageBucket: "gestiondescontenants.firebasestorage.app",
+  messagingSenderId: "974245233171",
+  appId: "1:974245233171:web:2d779724958d605c6d75e6"
+};
+
+/* IMPORTANT : auth et db sont déclarés AU NIVEAU GLOBAL (let),
+   puis assignés dans le try. Sinon ils n'existeraient que dans
+   le bloc try { } et seraient invisibles ailleurs (ReferenceError). */
+let auth = null;
+let db = null;
+try {
+  firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth();
+  db = firebase.firestore();
+} catch(err) {
+  showGlobalError('Erreur Firebase : ' + err.message);
+}
+
+/* ===================================================================
+   UTILITAIRES : jours ouvrés (exclut samedi & dimanche)
+   =================================================================== */
+function isWeekend(date){
+  const day = date.getDay();
+  return day === 0 || day === 6; // dimanche=0, samedi=6
+}
+
+function countWorkingDays(from, to){
+  let count = 0;
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  const end = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+  while(d <= end){
+    if(!isWeekend(d)) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return Math.max(1, count);
+}
+
+/* ===================================================================
+   UTILITAIRES UI
+   =================================================================== */
+function showGlobalError(msg){
+  const el = document.getElementById('global-error');
+  el.textContent = '⚠️ ' + msg;
+  el.classList.add('visible');
+  console.error(msg);
+}
+
+function toast(msg, type='ok'){
+  const wrap = document.getElementById('toast-wrap');
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type === 'err' ? 'err' : 'ok');
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(()=> el.remove(), 3500);
+}
+
+function showLoading(show){
+  document.getElementById('loading-overlay').classList.toggle('visible', show);
+}
+
+function escapeHtml(s){
+  return (s || '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[c]));
+}
+
+function formatDate(d){
+  if(!d) return '—';
+  return d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+}
+
+/* ===================================================================
+   AUTHENTIFICATION
+   =================================================================== */
+if(auth){
+  auth.onAuthStateChanged(user => {
+    if(user){
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+      document.getElementById('user-email').textContent = user.email;
+      loadAllData();
+    } else {
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('app').style.display = 'none';
+    }
+  });
+}
+
+function doLogin(){
+  if(!auth){ showGlobalError('Firebase non initialisé, recharge la page.'); return; }
+  const email = document.getElementById('login-email').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  if(!email || !pass){ errEl.textContent = 'Renseigne e-mail et mot de passe.'; return; }
+
+  auth.signInWithEmailAndPassword(email, pass)
+    .catch(err => { errEl.textContent = 'Échec : ' + err.message; });
+}
+
+function doLogout(){
+  if(auth) auth.signOut();
+}
+
+document.getElementById('login-pass').addEventListener('keydown', e=>{
+  if(e.key === 'Enter') doLogin();
+});
+
+/* ===================================================================
+   CHARGEMENT DES DONNÉES (LECTURE SEULE) + FILTRE WEEK-END
+   =================================================================== */
+let CONTENANTS = [];
+
+async function loadAllData(){
+  showLoading(true);
+  try {
+    const snap = await db.collection('contenants').get();
+    CONTENANTS = [];
+
+    snap.forEach(doc => {
+      const d = doc.data();
+
+      let creator = 'Inconnu';
+      let creationDate = null;
+
+      // Cherche le créateur dans l'historique (action = 'creation')
+      if(Array.isArray(d.historique) && d.historique.length > 0){
+        const creationEntry = d.historique.find(h => h.action === 'creation');
+        if(creationEntry){
+          creator = creationEntry.utilisateur || creationEntry.email || 'Inconnu';
+          creationDate = creationEntry.date;
+        } else {
+          creator = d.historique[0].utilisateur || d.historique[0].email || 'Inconnu';
+          creationDate = d.historique[0].date;
+        }
+      }
+
+      if(!creationDate) creationDate = d.dateCreation;
+
+      if(creationDate){
+        CONTENANTS.push({
+          id: doc.id,
+          date: creationDate.toDate ? creationDate.toDate() : new Date(creationDate),
+          creator: creator,
+          type: d.typeLettre || '?'
+        });
+      }
+    });
+
+    CONTENANTS.sort((a,b) => b.date - a.date);
+
+    // >>> FILTRE : exclut les créations du samedi & dimanche <<<
+    const totalBefore = CONTENANTS.length;
+    CONTENANTS = CONTENANTS.filter(c => !isWeekend(c.date));
+    const excludedWeekend = totalBefore - CONTENANTS.length;
+
+    renderAll();
+    toast(CONTENANTS.length + ' créations chargées (' + excludedWeekend + ' week-end exclues).', 'ok');
+  } catch(err) {
+    showGlobalError('Erreur chargement : ' + err.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+/* ===================================================================
+   RENDU GLOBAL
+   =================================================================== */
+function renderAll(){
+  renderKPIs();
+  renderDailyChart();
+  renderTopChart();
+  renderCreators();
+  renderDaily();
+}
+
+/* ===================================================================
+   KPIs
+   =================================================================== */
+function renderKPIs(){
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekAgo = new Date(today.getTime() - 7*24*60*60*1000);
+
+  const total = CONTENANTS.length;
+  const createdToday = CONTENANTS.filter(c => c.date >= today).length;
+  const createdWeek = CONTENANTS.filter(c => c.date >= weekAgo).length;
+  const uniqueCreators = new Set(CONTENANTS.map(c => c.creator)).size;
+
+  document.getElementById('kpi-total').textContent = total;
+  document.getElementById('kpi-today').textContent = createdToday;
+  document.getElementById('kpi-today-sub').textContent = new Date().toLocaleDateString('fr-FR', {weekday:'long', day:'numeric', month:'long'});
+  document.getElementById('kpi-week').textContent = createdWeek;
+  document.getElementById('kpi-creators').textContent = uniqueCreators;
+}
+
+/* ===================================================================
+   GRAPHIQUE : créations par jour (jours ouvrés uniquement)
+   =================================================================== */
+let dailyChart = null;
+
+function renderDailyChart(){
+  const now = new Date();
+  const days = [];
+  for(let i = 59; i >= 0; i--){
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    if(isWeekend(d)) continue; // >>> ignore samedi & dimanche <<<
+    days.push({date: d, count: 0});
+  }
+
+  CONTENANTS.forEach(c => {
+    const dayKey = new Date(c.date.getFullYear(), c.date.getMonth(), c.date.getDate()).getTime();
+    const bucket = days.find(d => d.date.getTime() === dayKey);
+    if(bucket) bucket.count++;
+  });
+
+  const labels = days.map(d => d.date.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}));
+  const data = days.map(d => d.count);
+
+  const ctx = document.getElementById('chart-daily').getContext('2d');
+
+  if(dailyChart) dailyChart.destroy();
+
+  dailyChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Créations',
+        data: data,
+        borderColor: '#2c5f8a',
+        backgroundColor: 'rgba(44, 95, 138, 0.1)',
+        borderWidth: 2,
+        tension: 0.3,
+        fill: true,
+        pointRadius: 3,
+        pointBackgroundColor: '#2c5f8a'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {display: false}
+      },
+      scales: {
+        x: {
+          grid: {display: false},
+          ticks: {
+            maxTicksLimit: 12,
+            maxRotation: 45,
+            minRotation: 45
+          }
+        },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            stepSize: 1,
+            precision: 0
+          },
+          title: {
+            display: true,
+            text: 'Nombre de créations'
+          }
+        }
+      }
+    }
+  });
+}
+
+/* ===================================================================
+   GRAPHIQUE : top créateurs
+   =================================================================== */
+let topChart = null;
+
+function renderTopChart(){
+  const counts = {};
+  CONTENANTS.forEach(c => {
+    counts[c.creator] = (counts[c.creator] || 0) + 1;
+  });
+
+  const sorted = Object.entries(counts)
+    .sort((a,b) => b[1] - a[1])
+    .slice(0, 10);
+
+  const labels = sorted.map(s => s[0]);
+  const data = sorted.map(s => s[1]);
+
+  const ctx = document.getElementById('chart-top').getContext('2d');
+
+  if(topChart) topChart.destroy();
+
+  topChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Total',
+        data: data,
+        backgroundColor: '#2c5f8a',
+        borderRadius: 4
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {display: false}
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: {precision: 0}
+        },
+        y: {
+          grid: {display: false}
+        }
+      }
+    }
+  });
+}
+
+/* ===================================================================
+   TABLEAU : créateurs détaillé (moyenne sur jours ouvrés)
+   =================================================================== */
+function renderCreators(){
+  const filter = (document.getElementById('filter-creator').value || '').toLowerCase();
+  const period = document.getElementById('filter-period').value;
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekAgo = new Date(today.getTime() - 7*24*60*60*1000);
+  const monthAgo = new Date(today.getTime() - 30*24*60*60*1000);
+  const yearStart = new Date(now.getFullYear(), 0, 1);
+
+  let filtered = CONTENANTS;
+  if(period === 'today') filtered = CONTENANTS.filter(c => c.date >= today);
+  else if(period === '7days') filtered = CONTENANTS.filter(c => c.date >= weekAgo);
+  else if(period === '30days') filtered = CONTENANTS.filter(c => c.date >= monthAgo);
+  else if(period === 'year') filtered = CONTENANTS.filter(c => c.date >= yearStart);
+
+  if(filter){
+    filtered = filtered.filter(c => c.creator.toLowerCase().includes(filter));
+  }
+
+  const byCreator = {};
+  filtered.forEach(c => {
+    if(!byCreator[c.creator]){
+      byCreator[c.creator] = {
+        total: 0,
+        today: 0,
+        week: 0,
+        firstDate: c.date,
+        lastDate: c.date
+      };
+    }
+    byCreator[c.creator].total++;
+    if(c.date >= today) byCreator[c.creator].today++;
+    if(c.date >= weekAgo) byCreator[c.creator].week++;
+    if(c.date < byCreator[c.creator].firstDate) byCreator[c.creator].firstDate = c.date;
+    if(c.date > byCreator[c.creator].lastDate) byCreator[c.creator].lastDate = c.date;
+  });
+
+  const rows = Object.entries(byCreator).sort((a,b) => b[1].total - a[1].total);
+  const maxTotal = rows.length > 0 ? rows[0][1].total : 1;
+
+  const el = document.getElementById('creators-table');
+
+  if(rows.length === 0){
+    el.innerHTML = '<div class="empty">Aucun créateur pour cette période.</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr>' +
+    '<th>Créateur</th>' +
+    '<th class="num">Total</th>' +
+    '<th class="num">Aujourd\'hui</th>' +
+    '<th class="num">7 derniers jours</th>' +
+    '<th class="num">Moyenne / jour ouvré</th>' +
+    '<th>Première création</th>' +
+    '<th>Dernière création</th>' +
+    '</tr></thead><tbody>';
+
+  rows.forEach(([creator, stats]) => {
+    // >>> moyenne calculée sur les jours ouvrés uniquement <<<
+    const daysActive = countWorkingDays(stats.firstDate, stats.lastDate);
+    const avg = (stats.total / daysActive).toFixed(2);
+    const barWidth = (stats.total / maxTotal) * 100;
+
+    html += '<tr>' +
+      '<td><strong>' + escapeHtml(creator) + '</strong></td>' +
+      '<td class="num"><strong>' + stats.total + '</strong><span class="bar" style="width:' + barWidth + '%;"></span></td>' +
+      '<td class="num">' + (stats.today > 0 ? '<span class="bar bar-today" style="width:' + (stats.today/maxTotal*100) + '%;"></span> ' + stats.today : '—') + '</td>' +
+      '<td class="num">' + (stats.week > 0 ? '<span class="bar bar-week" style="width:' + (stats.week/maxTotal*100) + '%;"></span> ' + stats.week : '—') + '</td>' +
+      '<td class="num">' + avg + '</td>' +
+      '<td class="mono">' + formatDate(stats.firstDate) + '</td>' +
+      '<td class="mono">' + formatDate(stats.lastDate) + '</td>' +
+      '</tr>';
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+/* ===================================================================
+   TABLEAU : historique jour par jour (jours ouvrés)
+   =================================================================== */
+function renderDaily(){
+  const fromStr = document.getElementById('filter-from').value;
+  const toStr = document.getElementById('filter-to').value;
+
+  let filtered = CONTENANTS;
+  if(fromStr){
+    const from = new Date(fromStr);
+    filtered = filtered.filter(c => c.date >= from);
+  }
+  if(toStr){
+    const to = new Date(toStr);
+    to.setHours(23,59,59,999);
+    filtered = filtered.filter(c => c.date <= to);
+  }
+
+  const byDay = {};
+  filtered.forEach(c => {
+    const dayKey = new Date(c.date.getFullYear(), c.date.getMonth(), c.date.getDate()).toISOString().split('T')[0];
+    if(!byDay[dayKey]) byDay[dayKey] = {date: dayKey, total: 0, byCreator: {}};
+    byDay[dayKey].total++;
+    byDay[dayKey].byCreator[c.creator] = (byDay[dayKey].byCreator[c.creator] || 0) + 1;
+  });
+
+  const rows = Object.values(byDay).sort((a,b) => b.date.localeCompare(a.date));
+
+  const el = document.getElementById('daily-table');
+
+  if(rows.length === 0){
+    el.innerHTML = '<div class="empty">Aucune création sur cette période.</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr>' +
+    '<th>Date</th>' +
+    '<th>Jour</th>' +
+    '<th class="num">Total</th>' +
+    '<th>Répartition par créateur</th>' +
+    '</tr></thead><tbody>';
+
+  rows.forEach(day => {
+    const d = new Date(day.date);
+    const dayName = d.toLocaleDateString('fr-FR', {weekday: 'long'});
+
+    const creators = Object.entries(day.byCreator).sort((a,b) => b[1] - a[1]);
+    const details = creators.map(([name, count]) =>
+      '<strong>' + escapeHtml(name) + '</strong>: ' + count
+    ).join(' — ');
+
+    html += '<tr>' +
+      '<td class="mono"><strong>' + d.toLocaleDateString('fr-FR') + '</strong></td>' +
+      '<td style="text-transform:capitalize;">' + dayName + '</td>' +
+      '<td class="num"><strong>' + day.total + '</strong></td>' +
+      '<td style="font-size:12.5px;">' + details + '</td>' +
+      '</tr>';
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function resetDateFilter(){
+  document.getElementById('filter-from').value = '';
+  document.getElementById('filter-to').value = '';
+  renderDaily();
+}
+</script>
+
+</body>
+</html>
