@@ -146,7 +146,14 @@ main{flex:1; padding:24px; max-width:1400px; width:100%; margin:0 auto;}
 @media (max-width:900px){ .chart-grid{grid-template-columns:1fr;} }
 .chart-wrap{position:relative; height:320px;}
 
-/* ---------- Catégories & cibles ---------- */
+/* ---------- Catégories, cibles & projections ---------- */
+.proj-banner{
+  margin-bottom:14px; padding:12px 16px; border-radius:8px;
+  background:var(--steel-bg); border:1px solid rgba(44,95,138,.25);
+  font-size:13px; color:var(--steel-dark);
+  display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+}
+.proj-banner strong{font-family:var(--mono);}
 .cat-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:16px;}
 .cat-card{
   border:1px solid var(--line); border-radius:8px; padding:16px;
@@ -167,6 +174,14 @@ main{flex:1; padding:24px; max-width:1400px; width:100%; margin:0 auto;}
 .cat-progress-fill{height:100%; background:var(--ok); border-radius:99px; transition:width .3s;}
 .cat-progress-fill.over{background:var(--attention);}
 .cat-progress-label{font-size:12px; color:var(--ink-soft);}
+.cat-proj{
+  font-size:12.5px; color:var(--ink-soft);
+  display:flex; flex-direction:column; gap:3px;
+  border-top:1px dashed var(--line); padding-top:8px;
+}
+.cat-proj .proj-date{font-weight:700; color:var(--ink); font-family:var(--mono);}
+.cat-proj .proj-done{color:var(--ok); font-weight:700;}
+.cat-proj .proj-none{color:var(--attention); font-weight:600;}
 .cat-persons{display:flex; flex-direction:column; gap:4px; margin-top:4px;}
 .cat-person{
   display:flex; justify-content:space-between; font-size:12.5px;
@@ -324,10 +339,23 @@ select:focus, input:focus{outline:2px solid var(--steel);}
       </div>
     </div>
 
-    <!-- ===== Panneau Catégories & cibles ===== -->
+    <!-- ===== Panneau Catégories, cibles & projections ===== -->
     <div class="panel">
-      <h2>Catégories — identification & objectifs</h2>
-      <p class="sub">Par catégorie : total identifié, cible modifiable, progression et répartition par personne</p>
+      <h2>Catégories — identification, cibles & projections</h2>
+      <p class="sub">Par catégorie : total identifié, cible modifiable, rythme de réalisation et date de fin projetée</p>
+
+      <div class="toolbar">
+        <label style="font-size:12.5px; color:var(--ink-soft);">Période de référence du rythme :</label>
+        <select id="filter-rythme" onchange="changerPeriodeRythme(this.value)">
+          <option value="7">7 derniers jours</option>
+          <option value="30" selected>30 derniers jours</option>
+          <option value="90">90 derniers jours</option>
+          <option value="0">Depuis le début</option>
+        </select>
+      </div>
+
+      <div id="projection-globale" class="proj-banner" style="display:none;"></div>
+
       <div id="categories-panel-body"></div>
     </div>
 
@@ -406,6 +434,11 @@ function isWeekend(date){
   return day === 0 || day === 6;
 }
 
+function startOfToday(){
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+
 function countWorkingDays(from, to){
   let count = 0;
   const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
@@ -415,6 +448,17 @@ function countWorkingDays(from, to){
     d.setDate(d.getDate() + 1);
   }
   return Math.max(1, count);
+}
+
+/* Ajoute n jours OUVRÉS à une date (saute samedi & dimanche) */
+function addWorkingDays(date, n){
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  let added = 0;
+  while(added < n){
+    d.setDate(d.getDate() + 1);
+    if(!isWeekend(d)) added++;
+  }
+  return d;
 }
 
 /* ===================================================================
@@ -499,8 +543,6 @@ let CAT_ORDER = [];   // ordre d'affichage des catégories (pour setCible(idx))
 async function loadAllData(){
   showLoading(true);
   try {
-    // Charge types & catégories (lecture seule)
-    // ATTENTION : noms des collections tels que définis dans les règles Firestore
     try {
       const tSnap = await db.collection('typesContenants').get();
       tSnap.forEach(d => { TYPES[d.id] = d.data(); });
@@ -533,7 +575,6 @@ async function loadAllData(){
 
       if(!creationDate) creationDate = d.dateCreation;
 
-      // Résolution de la catégorie via type -> categorieId -> nom
       const t = TYPES[d.typeLettre];
       const catId = t ? (t.categorieId || null) : null;
       const catName = (catId && CATEGORIES[catId]) ? CATEGORIES[catId].nom : 'Sans catégorie';
@@ -581,8 +622,7 @@ function renderAll(){
    KPIs
    =================================================================== */
 function renderKPIs(){
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = startOfToday();
   const weekAgo = new Date(today.getTime() - 7*24*60*60*1000);
 
   const total = CONTENANTS.length;
@@ -615,33 +655,86 @@ function setCible(idx, val){
   toast('Cible « ' + catName + ' » mise à jour.', 'ok');
 }
 
+/* Période de référence pour le calcul du rythme (en jours calendaires, 0 = depuis le début) */
+let RYTHME_PERIODE_JOURS = 30;
+
+function changerPeriodeRythme(val){
+  RYTHME_PERIODE_JOURS = parseInt(val, 10) || 0;
+  renderCategories();
+}
+
 /* ===================================================================
-   PANNEAU : Catégories — identification & objectifs
+   PANNEAU : Catégories — cibles, rythme & projection
    =================================================================== */
 function renderCategories(){
+  const today = startOfToday();
+
+  /* --- 1ère passe : agrégation par catégorie --- */
   const byCat = {};
   CONTENANTS.forEach(c => {
     const cat = c.categorie || 'Sans catégorie';
-    if(!byCat[cat]) byCat[cat] = {total:0, byCreator:{}};
+    if(!byCat[cat]) byCat[cat] = {total:0, byCreator:{}, firstDate:c.date};
     byCat[cat].total++;
     byCat[cat].byCreator[c.creator] = (byCat[cat].byCreator[c.creator] || 0) + 1;
+    if(c.date < byCat[cat].firstDate) byCat[cat].firstDate = c.date;
   });
 
   const el = document.getElementById('categories-panel-body');
+  const banner = document.getElementById('projection-globale');
   const cats = Object.entries(byCat).sort((a,b) => b[1].total - a[1].total);
   CAT_ORDER = cats.map(c => c[0]);
 
   if(cats.length === 0){
     el.innerHTML = '<div class="empty">Aucune catégorie à afficher.</div>';
+    banner.style.display = 'none';
     return;
   }
 
   let html = '<div class="cat-grid">';
 
+  /* Accumulateurs pour la projection globale */
+  let gRemaining = 0, gPace = 0, gHasTarget = false;
+
   cats.forEach(([catName, stats], idx) => {
     const target = getCible(catName);
     const pct = target > 0 ? Math.min(100, Math.round(stats.total / target * 100)) : 0;
     const over = target > 0 && stats.total >= target;
+
+    /* --- Rythme : identifications / jours ouvrés sur la période de référence --- */
+    let start;
+    if(RYTHME_PERIODE_JOURS > 0){
+      const windowStart = new Date(today.getTime() - RYTHME_PERIODE_JOURS*24*60*60*1000);
+      start = (stats.firstDate > windowStart) ? stats.firstDate : windowStart;
+    } else {
+      start = stats.firstDate;
+    }
+    let countSince = 0;
+    CONTENANTS.forEach(c => {
+      if((c.categorie || 'Sans catégorie') === catName && c.date >= start) countSince++;
+    });
+    const wd = countWorkingDays(start, today);
+    const pace = wd > 0 ? countSince / wd : 0;
+
+    /* --- Projection : restant / rythme → date de fin en jours ouvrés --- */
+    const remaining = Math.max(0, target - stats.total);
+    let projHtml;
+    if(target <= 0){
+      projHtml = '<span style="opacity:.7;">Définis une cible pour calculer la projection</span>';
+    } else if(remaining === 0){
+      projHtml = '<span class="proj-done">🎉 Cible atteinte</span>';
+    } else if(pace <= 0){
+      projHtml = '<span class="proj-none">Aucune activité sur la période — projection impossible</span>';
+    } else {
+      const daysNeeded = Math.ceil(remaining / pace);
+      const projDate = addWorkingDays(today, daysNeeded);
+      projHtml = 'Fin projetée : <span class="proj-date">' + projDate.toLocaleDateString('fr-FR') +
+                 '</span> (~' + daysNeeded + ' j ouvrés)';
+      gRemaining += remaining;
+      gPace += pace;
+    }
+    if(target > 0) gHasTarget = true;
+
+    const paceLabel = RYTHME_PERIODE_JOURS > 0 ? ('sur ' + RYTHME_PERIODE_JOURS + ' j') : 'depuis le début';
 
     const persons = Object.entries(stats.byCreator).sort((a,b) => b[1] - a[1]);
     const personsHtml = persons.map(([p,n]) =>
@@ -663,12 +756,35 @@ function renderCategories(){
         '<div class="cat-progress-label">' +
           (target > 0 ? stats.total + ' / ' + target + ' (' + pct + '%)' : 'Aucune cible définie') +
         '</div>' +
+        '<div class="cat-proj">' +
+          '<div>Rythme : <strong>' + pace.toFixed(2) + '</strong> / j ouvré (' + paceLabel + ')</div>' +
+          '<div>' + projHtml + '</div>' +
+        '</div>' +
         '<div class="cat-persons">' + personsHtml + '</div>' +
       '</div>';
   });
 
   html += '</div>';
   el.innerHTML = html;
+
+  /* --- Projection globale (toutes catégories avec cible) --- */
+  if(!gHasTarget){
+    banner.style.display = 'none';
+  } else if(gRemaining === 0){
+    banner.style.display = 'flex';
+    banner.innerHTML = '🎉 <strong>Toutes les cibles sont atteintes.</strong>';
+  } else if(gPace <= 0){
+    banner.style.display = 'flex';
+    banner.innerHTML = '⚠️ Cibles définies mais aucune activité récente : projection impossible.';
+  } else {
+    const gDays = Math.ceil(gRemaining / gPace);
+    const gDate = addWorkingDays(today, gDays);
+    banner.style.display = 'flex';
+    banner.innerHTML =
+      '📈 Projection globale : <strong>' + gRemaining + '</strong> identification(s) restante(s) au rythme de <strong>' +
+      gPace.toFixed(2) + '</strong> / j ouvré → fin estimée le <strong>' + gDate.toLocaleDateString('fr-FR') +
+      '</strong> (~' + gDays + ' jours ouvrés).';
+  }
 }
 
 /* ===================================================================
@@ -769,11 +885,10 @@ function renderCreators(){
   const filter = (document.getElementById('filter-creator').value || '').toLowerCase();
   const period = document.getElementById('filter-period').value;
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = startOfToday();
   const weekAgo = new Date(today.getTime() - 7*24*60*60*1000);
   const monthAgo = new Date(today.getTime() - 30*24*60*60*1000);
-  const yearStart = new Date(now.getFullYear(), 0, 1);
+  const yearStart = new Date(today.getFullYear(), 0, 1);
 
   let filtered = CONTENANTS;
   if(period === 'today') filtered = CONTENANTS.filter(c => c.date >= today);
